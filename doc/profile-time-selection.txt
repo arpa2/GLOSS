@@ -1,0 +1,294 @@
+PROFILING TIME SELECTION CRITERIA IN GLOSS
+
+The current implementation selects time with various forms of --before
+and --after arguments.  A rough first selection is made in the logline's
+regexp, but it is incomplete and must be further computed in the remainder
+of the code.
+
+Note that one slight improvement might be made by not comparing with the
+--after timestamp once it has agreed.  This, however, is barely of
+influence because from then on we need to be on our guard for the
+--before timestamp, if it is specified, and that means we still need
+to go through the slow strptime() and mktime().  Such a quick fix is
+nice when no --before is specified, but what is described below, to
+go through regexps, is better because it works equally well in all
+cases.
+
+
+
+Quick tests confirm that the strptime() and context is very expensive.
+First, we run it with this test for every line matched (before doing
+the where part, which we thought would be more costly).  Second, we
+run it with the strptime test disabled; note how close the output
+counts are because the dates allow filtering in regexp, which could be
+extended to a general practice.  Add to this the dificulties of
+internationalisation and daylight savings time... and a string-based
+approach, like one built into the generated regular expressions, is
+highly interesting.
+
+shell$ time python -m cProfile ./gloss.py -b thu -a wed -f mail.log | wc -l
+ 1299944
+real	0m8.816s
+user	0m8.606s
+sys	0m0.182s
+
+shell$ time python -m cProfile ./gloss.py -b thu -a wed -f mail.log | wc -l
+ 1299879
+real	0m3.020s
+user	0m2.946s
+sys	0m0.117s
+
+
+
+The profiling test below detect that strptime() and mktime() together
+constitute over 4.9 seconds of running time, and that is without the
+extra work that the scripts need to do to prepare for it.  Of the 5.8
+seconds difference between the two runs above, we can remove most of
+it by stopping to depend on strptime() and mktime() which we can do
+if we generated more clever regular expressions that already select
+on this data.  Such a regular expression would enter a tree with an
+initial branch selected by the beginning, and further down branches
+that are only selected at the start or end, or neither.  It is a bit
+of work to generate such patterns, but it is well worth the effort,
+as shown here.
+
+
+
+shell$ python -m cProfile ./gloss.py -b thu -a wed -f mail.log
+
+...program output sent to file...
+
+         4122641 function calls (4121940 primitive calls) in 8.728 seconds
+
+   Ordered by: standard name
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        2    0.000    0.000    0.000    0.000 UserDict.py:18(__getitem__)
+        8    0.000    0.000    0.000    0.000 UserDict.py:58(get)
+        8    0.000    0.000    0.000    0.000 UserDict.py:70(__contains__)
+        2    0.000    0.000    0.000    0.000 __init__.py:49(normalize_encoding)
+        1    0.000    0.000    0.000    0.000 _strptime.py:103(__calc_am_pm)
+        1    0.000    0.000    0.000    0.000 _strptime.py:115(__calc_date_time)
+        1    0.003    0.003    0.008    0.008 _strptime.py:12(<module>)
+        1    0.000    0.000    0.000    0.000 _strptime.py:160(__calc_timezone)
+        1    0.000    0.000    0.000    0.000 _strptime.py:176(TimeRE)
+        1    0.000    0.000    0.001    0.001 _strptime.py:179(__init__)
+        5    0.000    0.000    0.000    0.000 _strptime.py:212(<genexpr>)
+        6    0.000    0.000    0.000    0.000 _strptime.py:221(__seqToRE)
+       50    0.000    0.000    0.000    0.000 _strptime.py:236(<genexpr>)
+        4    0.000    0.000    0.001    0.000 _strptime.py:240(pattern)
+        1    0.000    0.000    0.002    0.002 _strptime.py:263(compile)
+   129973    0.080    0.000    0.735    0.000 _strptime.py:27(_getlang)
+   129971    2.095    0.000    3.573    0.000 _strptime.py:295(_strptime)
+        1    0.000    0.000    0.000    0.000 _strptime.py:31(LocaleTime)
+   129971    0.120    0.000    3.692    0.000 _strptime.py:466(_strptime_time)
+        1    0.000    0.000    0.000    0.000 _strptime.py:50(__init__)
+        1    0.000    0.000    0.000    0.000 _strptime.py:88(__calc_weekday)
+        1    0.000    0.000    0.000    0.000 _strptime.py:96(__calc_month)
+        1    0.000    0.000    0.000    0.000 argparse.py:1006(_HelpAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:1025(_VersionAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:1050(_SubParsersAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:1052(_ChoicesPseudoAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:1138(FileType)
+        1    0.000    0.000    0.000    0.000 argparse.py:1186(Namespace)
+        1    0.000    0.000    0.000    0.000 argparse.py:1193(__init__)
+        1    0.000    0.000    0.000    0.000 argparse.py:1209(_ActionsContainer)
+        3    0.000    0.000    0.001    0.000 argparse.py:1211(__init__)
+       37    0.000    0.000    0.000    0.000 argparse.py:122(_callable)
+       34    0.000    0.000    0.000    0.000 argparse.py:1263(register)
+       37    0.000    0.000    0.000    0.000 argparse.py:1267(_registry_get)
+       16    0.000    0.000    0.001    0.000 argparse.py:1292(add_argument)
+        2    0.000    0.000    0.000    0.000 argparse.py:1332(add_argument_group)
+       16    0.000    0.000    0.000    0.000 argparse.py:1342(_add_action)
+        1    0.000    0.000    0.000    0.000 argparse.py:139(_AttributeHolder)
+       16    0.000    0.000    0.000    0.000 argparse.py:1422(_get_optional_kwargs)
+       16    0.000    0.000    0.000    0.000 argparse.py:1457(_pop_action_class)
+        3    0.000    0.000    0.000    0.000 argparse.py:1461(_get_handler)
+       16    0.000    0.000    0.000    0.000 argparse.py:1470(_check_conflict)
+        1    0.000    0.000    0.000    0.000 argparse.py:1506(_ArgumentGroup)
+        2    0.000    0.000    0.000    0.000 argparse.py:1508(__init__)
+       16    0.000    0.000    0.000    0.000 argparse.py:1529(_add_action)
+        1    0.000    0.000    0.000    0.000 argparse.py:1539(_MutuallyExclusiveGroup)
+        1    0.000    0.000    0.000    0.000 argparse.py:1559(ArgumentParser)
+        1    0.000    0.000    0.001    0.001 argparse.py:1577(__init__)
+        1    0.000    0.000    0.000    0.000 argparse.py:1623(identity)
+        1    0.000    0.000    0.000    0.000 argparse.py:164(_ensure_value)
+       16    0.000    0.000    0.000    0.000 argparse.py:1704(_add_action)
+        1    0.000    0.000    0.000    0.000 argparse.py:1716(_get_positional_actions)
+        1    0.000    0.000    0.000    0.000 argparse.py:1724(parse_args)
+        1    0.000    0.000    0.000    0.000 argparse.py:1731(parse_known_args)
+        1    0.000    0.000    0.000    0.000 argparse.py:174(HelpFormatter)
+        1    0.000    0.000    0.000    0.000 argparse.py:1763(_parse_known_args)
+        3    0.000    0.000    0.000    0.000 argparse.py:1810(take_action)
+        3    0.000    0.000    0.000    0.000 argparse.py:1831(consume_optional)
+        1    0.000    0.000    0.000    0.000 argparse.py:1908(consume_positionals)
+        3    0.000    0.000    0.000    0.000 argparse.py:2041(_match_argument)
+        1    0.000    0.000    0.000    0.000 argparse.py:2060(_match_arguments_partial)
+        6    0.000    0.000    0.000    0.000 argparse.py:2076(_parse_optional)
+        3    0.000    0.000    0.000    0.000 argparse.py:2177(_get_nargs_pattern)
+        1    0.000    0.000    0.000    0.000 argparse.py:222(_Section)
+        3    0.000    0.000    0.000    0.000 argparse.py:2221(_get_values)
+        5    0.000    0.000    0.000    0.000 argparse.py:2270(_get_value)
+        3    0.000    0.000    0.000    0.000 argparse.py:2295(_check_value)
+        1    0.000    0.000    0.001    0.001 argparse.py:63(<module>)
+        1    0.000    0.000    0.000    0.000 argparse.py:654(RawDescriptionHelpFormatter)
+        1    0.000    0.000    0.000    0.000 argparse.py:665(RawTextHelpFormatter)
+        1    0.000    0.000    0.000    0.000 argparse.py:676(ArgumentDefaultsHelpFormatter)
+        1    0.000    0.000    0.000    0.000 argparse.py:710(ArgumentError)
+        1    0.000    0.000    0.000    0.000 argparse.py:730(ArgumentTypeError)
+        1    0.000    0.000    0.000    0.000 argparse.py:739(Action)
+       16    0.000    0.000    0.000    0.000 argparse.py:790(__init__)
+        1    0.000    0.000    0.000    0.000 argparse.py:830(_StoreAction)
+        5    0.000    0.000    0.000    0.000 argparse.py:832(__init__)
+        2    0.000    0.000    0.000    0.000 argparse.py:861(__call__)
+        1    0.000    0.000    0.000    0.000 argparse.py:865(_StoreConstAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:867(__init__)
+        1    0.000    0.000    0.000    0.000 argparse.py:888(_StoreTrueAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:890(__init__)
+        1    0.000    0.000    0.000    0.000 argparse.py:905(_StoreFalseAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:922(_AppendAction)
+        8    0.000    0.000    0.000    0.000 argparse.py:924(__init__)
+        1    0.000    0.000    0.000    0.000 argparse.py:953(__call__)
+        1    0.000    0.000    0.000    0.000 argparse.py:959(_AppendConstAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:961(__init__)
+        1    0.000    0.000    0.000    0.000 argparse.py:985(_CountAction)
+        1    0.000    0.000    0.000    0.000 argparse.py:987(__init__)
+        1    0.000    0.000    0.000    0.000 calendar.py:126(Calendar)
+        1    0.000    0.000    0.000    0.000 calendar.py:132(__init__)
+        1    0.000    0.000    0.000    0.000 calendar.py:138(setfirstweekday)
+        1    0.000    0.000    0.000    0.000 calendar.py:21(IllegalMonthError)
+        1    0.000    0.000    0.000    0.000 calendar.py:259(TextCalendar)
+        1    0.000    0.000    0.000    0.000 calendar.py:28(IllegalWeekdayError)
+        1    0.000    0.000    0.000    0.000 calendar.py:376(HTMLCalendar)
+        1    0.000    0.000    0.000    0.000 calendar.py:47(_localized_month)
+        1    0.000    0.000    0.000    0.000 calendar.py:488(TimeEncoding)
+        2    0.000    0.000    0.000    0.000 calendar.py:50(<lambda>)
+        1    0.000    0.000    0.000    0.000 calendar.py:501(LocaleTextCalendar)
+        2    0.000    0.000    0.000    0.000 calendar.py:52(__init__)
+        1    0.000    0.000    0.000    0.000 calendar.py:536(LocaleHTMLCalendar)
+       26    0.000    0.000    0.000    0.000 calendar.py:55(__getitem__)
+        1    0.004    0.004    0.004    0.004 calendar.py:6(<module>)
+        1    0.000    0.000    0.000    0.000 calendar.py:66(_localized_day)
+        2    0.000    0.000    0.000    0.000 calendar.py:71(__init__)
+       14    0.000    0.000    0.000    0.000 calendar.py:74(__getitem__)
+        1    0.000    0.000    0.000    0.000 copy.py:113(_copy_with_constructor)
+        1    0.000    0.000    0.000    0.000 copy.py:66(copy)
+        8    0.000    0.000    0.000    0.000 genericpath.py:23(exists)
+        4    0.000    0.000    0.000    0.000 gettext.py:132(_expand_lang)
+        2    0.000    0.000    0.000    0.000 gettext.py:424(find)
+        2    0.000    0.000    0.000    0.000 gettext.py:464(translation)
+        2    0.000    0.000    0.000    0.000 gettext.py:530(dgettext)
+        2    0.000    0.000    0.000    0.000 gettext.py:568(gettext)
+        2    0.000    0.000    0.000    0.000 gloss.py:213(timevalue)
+        1    2.481    2.481    8.728    8.728 gloss.py:23(<module>)
+        1    0.000    0.000    0.000    0.000 gloss.py:322(Pattern)
+        1    0.000    0.000    0.005    0.005 gloss.py:324(__init__)
+   365164    0.278    0.000    1.003    0.000 gloss.py:327(match)
+        2    0.000    0.000    0.000    0.000 locale.py:347(_replace_encoding)
+   129977    0.230    0.000    0.369    0.000 locale.py:363(normalize)
+   129973    0.100    0.000    0.469    0.000 locale.py:447(_parse_localename)
+   129973    0.121    0.000    0.655    0.000 locale.py:546(getlocale)
+        8    0.000    0.000    0.000    0.000 posixpath.py:61(join)
+        3    0.000    0.000    0.000    0.000 re.py:138(match)
+       15    0.000    0.000    0.008    0.001 re.py:192(compile)
+       44    0.000    0.000    0.000    0.000 re.py:208(escape)
+       18    0.000    0.000    0.008    0.000 re.py:230(_compile)
+        8    0.000    0.000    0.000    0.000 re.py:264(_compile_repl)
+        8    0.000    0.000    0.000    0.000 re.py:284(_subx)
+       51    0.000    0.000    0.000    0.000 sre_compile.py:101(fixup)
+       30    0.000    0.000    0.000    0.000 sre_compile.py:228(_compile_charset)
+       30    0.000    0.000    0.000    0.000 sre_compile.py:256(_optimize_charset)
+        1    0.000    0.000    0.000    0.000 sre_compile.py:411(_mk_bitmap)
+       15    0.000    0.000    0.000    0.000 sre_compile.py:428(_simple)
+        8    0.000    0.000    0.001    0.000 sre_compile.py:433(_compile_info)
+       16    0.000    0.000    0.000    0.000 sre_compile.py:546(isstring)
+        8    0.000    0.000    0.004    0.001 sre_compile.py:552(_code)
+        8    0.000    0.000    0.008    0.001 sre_compile.py:567(compile)
+    218/8    0.002    0.000    0.003    0.000 sre_compile.py:64(_compile)
+      137    0.000    0.000    0.000    0.000 sre_parse.py:137(__len__)
+        6    0.000    0.000    0.000    0.000 sre_parse.py:139(__delitem__)
+      749    0.000    0.000    0.001    0.000 sre_parse.py:141(__getitem__)
+       15    0.000    0.000    0.000    0.000 sre_parse.py:145(__setitem__)
+      434    0.000    0.000    0.000    0.000 sre_parse.py:149(append)
+   233/23    0.001    0.000    0.001    0.000 sre_parse.py:151(getwidth)
+       10    0.000    0.000    0.000    0.000 sre_parse.py:189(__init__)
+      765    0.001    0.000    0.001    0.000 sre_parse.py:193(__next)
+      340    0.000    0.000    0.000    0.000 sre_parse.py:206(match)
+      528    0.000    0.000    0.001    0.000 sre_parse.py:212(get)
+        5    0.000    0.000    0.000    0.000 sre_parse.py:221(isident)
+        5    0.000    0.000    0.000    0.000 sre_parse.py:227(isname)
+        6    0.000    0.000    0.000    0.000 sre_parse.py:236(_class_escape)
+       16    0.000    0.000    0.000    0.000 sre_parse.py:268(_escape)
+     29/8    0.000    0.000    0.004    0.001 sre_parse.py:317(_parse_sub)
+    194/9    0.001    0.000    0.004    0.000 sre_parse.py:395(_parse)
+        8    0.000    0.000    0.000    0.000 sre_parse.py:67(__init__)
+        8    0.000    0.000    0.004    0.001 sre_parse.py:706(parse)
+        2    0.000    0.000    0.000    0.000 sre_parse.py:734(parse_template)
+       16    0.000    0.000    0.000    0.000 sre_parse.py:74(opengroup)
+        3    0.000    0.000    0.000    0.000 sre_parse.py:741(literal)
+       16    0.000    0.000    0.000    0.000 sre_parse.py:85(closegroup)
+      220    0.000    0.000    0.000    0.000 sre_parse.py:92(__init__)
+   129973    0.065    0.000    0.065    0.000 {_locale.setlocale}
+        8    0.000    0.000    0.000    0.000 {_sre.compile}
+       94    0.000    0.000    0.000    0.000 {_sre.getlower}
+        1    0.000    0.000    0.000    0.000 {chr}
+        7    0.000    0.000    0.000    0.000 {getattr}
+       58    0.000    0.000    0.000    0.000 {hasattr}
+   130797    0.077    0.000    0.077    0.000 {isinstance}
+        1    0.000    0.000    0.000    0.000 {iter}
+262611/262580    0.042    0.000    0.042    0.000 {len}
+       10    0.000    0.000    0.000    0.000 {map}
+      175    0.000    0.000    0.000    0.000 {max}
+        1    0.000    0.000    0.000    0.000 {method '__getitem__' of 'dict' objects}
+        6    0.000    0.000    0.000    0.000 {method 'add' of 'set' objects}
+     2658    0.000    0.000    0.000    0.000 {method 'append' of 'list' objects}
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+   129971    0.024    0.000    0.024    0.000 {method 'end' of '_sre.SRE_Match' objects}
+       24    0.000    0.000    0.000    0.000 {method 'endswith' of 'str' objects}
+        5    0.000    0.000    0.000    0.000 {method 'extend' of 'list' objects}
+       68    0.000    0.000    0.000    0.000 {method 'find' of 'bytearray' objects}
+       12    0.000    0.000    0.000    0.000 {method 'find' of 'str' objects}
+   260042    0.044    0.000    0.044    0.000 {method 'get' of 'dict' objects}
+        3    0.000    0.000    0.000    0.000 {method 'group' of '_sre.SRE_Match' objects}
+   129971    0.217    0.000    0.217    0.000 {method 'groupdict' of '_sre.SRE_Match' objects}
+   129971    0.084    0.000    0.084    0.000 {method 'groups' of '_sre.SRE_Match' objects}
+   129973    0.063    0.000    0.063    0.000 {method 'index' of 'list' objects}
+       20    0.000    0.000    0.000    0.000 {method 'index' of 'str' objects}
+        1    0.000    0.000    0.000    0.000 {method 'insert' of 'list' objects}
+        8    0.000    0.000    0.000    0.000 {method 'items' of 'dict' objects}
+   129971    0.026    0.000    0.026    0.000 {method 'iterkeys' of 'dict' objects}
+    58/14    0.000    0.000    0.000    0.000 {method 'join' of 'str' objects}
+   130022    0.029    0.000    0.029    0.000 {method 'lower' of 'str' objects}
+       15    0.000    0.000    0.000    0.000 {method 'lstrip' of 'str' objects}
+   495171    0.903    0.000    0.903    0.000 {method 'match' of '_sre.SRE_Pattern' objects}
+       32    0.000    0.000    0.000    0.000 {method 'pop' of 'dict' objects}
+        1    0.120    0.120    0.120    0.120 {method 'readlines' of 'file' objects}
+       16    0.000    0.000    0.000    0.000 {method 'remove' of 'list' objects}
+       92    0.000    0.000    0.000    0.000 {method 'replace' of 'str' objects}
+        4    0.000    0.000    0.000    0.000 {method 'reverse' of 'list' objects}
+       40    0.000    0.000    0.000    0.000 {method 'setdefault' of 'dict' objects}
+        8    0.000    0.000    0.000    0.000 {method 'split' of 'str' objects}
+       24    0.000    0.000    0.000    0.000 {method 'startswith' of 'str' objects}
+       38    0.000    0.000    0.000    0.000 {method 'strftime' of 'datetime.date' objects}
+        8    0.000    0.000    0.000    0.000 {method 'sub' of '_sre.SRE_Pattern' objects}
+   259943    0.039    0.000    0.039    0.000 {method 'toordinal' of 'datetime.date' objects}
+   129980    0.038    0.000    0.038    0.000 {method 'translate' of 'str' objects}
+   129971    0.018    0.000    0.018    0.000 {method 'weekday' of 'datetime.date' objects}
+      613    0.000    0.000    0.000    0.000 {min}
+        1    0.000    0.000    0.000    0.000 {open}
+      407    0.000    0.000    0.000    0.000 {ord}
+        8    0.000    0.000    0.000    0.000 {posix.stat}
+       37    0.000    0.000    0.000    0.000 {range}
+       21    0.000    0.000    0.000    0.000 {setattr}
+        6    0.000    0.000    0.000    0.000 {sorted}
+        1    0.000    0.000    0.000    0.000 {sys.exit}
+        1    0.000    0.000    0.000    0.000 {thread.allocate_lock}
+        3    0.000    0.000    0.000    0.000 {time.localtime}
+   129973    1.088    0.000    1.088    0.000 {time.mktime}
+        8    0.000    0.000    0.000    0.000 {time.strftime}
+   129971    0.174    0.000    3.875    0.000 {time.strptime}
+        1    0.000    0.000    0.000    0.000 {time.time}
+        1    0.000    0.000    0.000    0.000 {time.tzset}
+   129973    0.153    0.000    0.153    0.000 {zip}
+
+

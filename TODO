@@ -3,13 +3,20 @@
 Lines starting with - remain as TODO, lines with + are DONE.
 
 + logfile
+- journal
 - log-facility
-- before: timestamp
-- before: time
-- before: datetime
-- after: timestamp
-- after: time
-- after: datetime
++ before: timestamp
++ before: time
++ before: date
++ before: weekday
+- before: strptime() assumes i18n
+- before: daylight saving time
++ after: timestamp
++ after: time
++ after: datetime
++ after: weekday
+- after: strptime() assumes i18n
+- after: daylight saving time
 + pid: numeric
 + pid: progname
 + pid: /var/run/file.pid
@@ -31,6 +38,7 @@ Lines starting with - remain as TODO, lines with + are DONE.
 + where
 + or/where
 + regexp
+- tail
 - verbose: driver-missed lines
 - verbose: variables inline in textual log lines
 + verbose: report unknown line formats

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# gloss -- Grep for Logs on Open Source Systems
+# GLOSS -- Grep for Logs on Open Source Systems
 #
 # Parse the lines in log files, and perform selections on them to
 # bind variables, selecting on some and outputting others, to
@@ -15,7 +15,7 @@
 #  - within the current driver's scope
 #  - within the surrounding log entry scope
 # Variables of drivers are prefixed by the driver name; variables of
-# gloss itself are not prefixed.
+# GLOSS itself are not prefixed.
 #
 # From: Rick van Rein <rick@openfortress.nl>
 
@@ -31,7 +31,7 @@ import argparse
 # Commandline argument parser
 #
 
-argprs = argparse.ArgumentParser (prog="gloss",
+argprs = argparse.ArgumentParser (prog="GLOSS",
 		usage="Grep Logs on Open Source Systems -- helps to gloss over logs",
 		description="Log files are long and detailed; this tool structures their contents and helps to relate matching identifier fields",
 		add_help=False)
@@ -41,21 +41,26 @@ argprs.add_argument ('-f', '--logfile',
 		action='append',
 		help='explicit specification of a logfile to gloss over; may specify more than one; defaults are introduced by most --driver specifications; in absense of those, /var/log/syslog and /var/log/messages are used')
 
+argprs.add_argument ('-j', '--journal',
+		type=str,
+		default=None,
+		help='reserved to access systemd journals')
+
 argprs.add_argument ('-l', '--log-facility',
 		type=str,
 		default='*.*',
 		action='append',
-		help='log f1cility; used to find references in syslog.conf')
-
-argprs.add_argument ('-b', '--before',
-		type=str,
-		default=None,
-		help='select events before this time; when out of order with --after, drop the range instead of requiring it; may be an integer timestamp, a date/time, or a time (ranging back 24h)')
+		help='log facility; used to find references in syslog.conf')
 
 argprs.add_argument ('-a', '--after',
 		type=str,
 		default=None,
-		help='select events before this time; when out of order with --after, drop the range instead of requiring it; may be an integer timestamp, a date/time, or a time (ranging back 24h)')
+		help='select events at or after this time; may be an integer timestamp, a date, a time with or without seconds (ranging back 24h), or a week day (ranging back at most 6 days); non-overlapping combinations of words are permitted; specifying this as well as --before can speed up selection')
+
+argprs.add_argument ('-b', '--before',
+		type=str,
+		default=None,
+		help='select events at or before this time; may be an integer timestamp, a date, a time with or without seconds (ranging back 24h), or a week day (ranging back at most 6 days); non-overlapping combinations of words are permitte; specifying this as well as --after can speed up selectiond')
 
 argprs.add_argument ('-p', '--pid', '--proc',
 		type=str,
@@ -76,9 +81,9 @@ argprs.add_argument ('-d', '--driver',
 		help='for a driver; may be used to recognise a program\'s specific log file formatting; a directory holds a file with these drivers, and programs can install their data in here as a modular extension; these modules define similar parameters to the above to select whether they might apply, and then still they may fail; drivers may share variables and/or specify aliases in other drivers; there is a special driver named "pass" that will match any free form, which by default would not have passed; drivers are applied in the order of occurrence in these options')
 
 argprs.add_argument ('-m', '--mode',
-		type=str,
+		type=str,	#TODO# is a URL best to specify modes (with parameters)?
 		default=None,
-		help='run in another mode than the default output to a pager; specify an http URI for an HTTP server; the authority part may be a localhost port, an address:port; or use a UNIX domain socket, or ssh: for an SSH subsystem')
+		help='run in another mode than the default output to stdout or pager; specify an http URI for an HTTP server; the authority part may be a localhost port, an address:port; or use a UNIX domain socket, or ssh: for an SSH subsystem')
 
 argprs.add_argument ('-e', '--encoding',
 		type=str,
@@ -109,6 +114,10 @@ argprs.add_argument ('-r', '--regexp',
 		action='append',
 		help='require free-form regexp in the line\'s freeform text')
 
+argprs.add_argument ('-t', '--tail',
+		action='store_true',
+		help='tail on the log sources and see develop (where possible)')
+
 argprs.add_argument ('-v', '--verbose',
 		action="count",
 		help='increase verbosity: suggest files that match the criteria; report when drivers miss lines that they would have liked to match; show log entries with variables explicitly marked inline')
@@ -137,6 +146,14 @@ args = argprs.parse_args ()
 #
 # Interpret options, override defaults with more clever ones
 #
+
+if args.journal is not None:
+	sys.stderr.write ('The --journal option is not yet supported\n')
+	sys.exit (1)
+
+if args.tail:
+	sys.stderr.write ('The --tail option is not yet supported\n')
+	sys.exit (1)
 
 if args.logfile is None:
 	if args.driver is None:
@@ -176,26 +193,163 @@ for w in args.where:
 		conditions.append ( (wvar,wval,same) )
 
 #
+# Process time information (which is the most daunting cleverness)
+#
+
+weekdays = ['mon','tue','wed','thu','fri','sat','sun']
+months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+now = time.time ()
+(now_yr,now_mo,now_dy,now_hr,now_mn,now_sc,now_wd,now_jd,now_ds) = now_tm = time.localtime (now)
+re_numeric = re.compile ('[0-9]+')
+
+# Return a pattern of integers [Year,Month,Day,Hour,Min,Sec]
+# where integers may be set to None when unspecified, but
+# only tailing; when something is not None then neither are
+# preceding entries.  When unspecified, such preceding
+# entries are set to find the most recent entry.
+# The least specific return is filled with only None values.
+#
+def timevalue (arg):
+	pattern = [None,None,None,None,None,None]
+	if arg is None:
+		return pattern
+	if len (arg) >= 8 and re_numeric.match (arg):
+		(yr,mo,dy,hr,mn,sc,wd,jd,ds) = time.localtime (int (arg))
+		return [yr,mo,dy,hr,mn,sc]
+	for argi in arg.split (' '):
+		if ':' in argi:
+			if pattern [3] or pattern [4] or pattern [5]:
+				sys.stderr.write ('Multiple time specifications')
+				sys.exit (1)
+			hms = argi.split (':',2)
+			try:
+				pattern [3] = int (hms [0])
+				if pattern [3] < 0 or pattern [3] > 23:
+					raise Exception ('Bad hour')
+				pattern [4] = int (hms [1])
+				if pattern [4] < 0 or pattern [4] > 59:
+					raise Exception ('Bad minutes')
+				if len (hms) == 3:
+					pattern [5] = int (hms [2])
+					if pattern [5] < 0 or pattern [5] > 59:
+						raise Exception ('Bad seconds')
+			except Exception, e:
+				sys.stderr.write ('Wrong time ' + argi + ' (' + str (e) + ')\n')
+				sys.exit (1)
+		elif len (argi) == 3 and argi.lower () in weekdays:
+			if pattern [0] or pattern [1] or pattern [2]:
+				sys.stderr.write ('Weekday overlaps month/day specification\n')
+				sys.exit (1)
+			wdi = weekdays.index (argi.lower ())
+			back = 86400 * ((now_wd - wdi) % 7)
+			(yr,mo,dy,hr,mn,sc,wd,jd,ds) = time.localtime (now - back)
+			pattern [0] = yr
+			pattern [1] = mo
+			pattern [2] = dy
+		elif len (argi) == 3:
+			if pattern [1]:
+				sys.stderr.write ('Multiple month specifications')
+				sys.exit (1)
+			try:
+				argi = argi [0].upper () + argi [1:].lower ()
+				pattern [1] = 1 + months.index (argi)
+			except Exception, e:
+				sys.stderr.write ('Bad month (' + str (e) + ')\n')
+				sys.exit (1)
+		else:
+			try:
+				pattern [2] = int (argi)
+				if pattern [2] < 1 or pattern [2] > 31:
+					raise Exception ('Bad day of the month')
+			except Exception, e:
+				sys.stderr.write ('Bad day of the month (' + str (e) + ')\n')
+				sys.exit (1)
+		if pattern [1] and not pattern [2]:
+			pattern [2] = 1
+		elif pattern [3] and not pattern [1]:
+			yr = now_yr
+			mo = now_mo
+			dy = now_dy
+			if pattern [3] > now_hr or (pattern [2] == now_hr and pattern [4] > now_mn):
+				(yr,mo,dy,hr,mn,sc,wd,jd,ds) = time.localtime (now - 86400)
+			pattern [0] = yr
+			pattern [1] = mo
+			pattern [2] = dy
+	return pattern
+
+patn_after  = timevalue (args.after )
+patn_before = timevalue (args.before)
+
+cmp_after  = [ patn_after  [i] for i in range (len (patn_after)) if patn_after [i] and patn_before [i] ]
+cmp_before = [ patn_before [i] for i in range (len (patn_after)) if patn_after [i] and patn_before [i] ]
+if cmp_after > cmp_before:
+	sys.stderr.write ('Wrong order of --after ' + args.after + ' and --before ' + args.before + '\n')
+	sys.exit (1)
+
+time_ranges = [ (now_yr-1,now_yr), (1,12), (1,31), (0,23), (0,59), (0,59) ]
+
+tsi_after  = [ patn_after  [i] or time_ranges [i][0] for i in range (len (patn_after )) ]
+tsi_before = [ patn_before [i] or time_ranges [i][1] for i in range (len (patn_before)) ]
+
+for (a,b,i) in zip (cmp_after,cmp_before,range (len (cmp_after))):
+	if a is None:
+		a = time_ranges [i][0]
+	if b is None:
+		b = time_ranges [i][1]
+	time_ranges [i] = (a,b)
+	if not a or not b or a != b:
+		break
+
+time_ranges = [ range (a,b+1) for (a,b) in time_ranges ]
+
+#TODO# problems with DST, may lead to an hour extra (or, perhaps less)
+if cmp_after != []:
+	ts_after  = time.mktime ( (tsi_after [0],tsi_after [1],tsi_after [2],tsi_after [3],tsi_after [4],tsi_after [5],-1,-1,now_ds) )
+else:
+	ts_after = None
+
+if cmp_before != []:
+	ts_before = time.mktime ( (tsi_before[0],tsi_before[1],tsi_before[2],tsi_before[3],tsi_before[4],tsi_before[5],-1,-1,now_ds) )
+else:
+	ts_before = None
+
+
+#
 # Form regular expressions for the logfile lines
 #
 
+class Pattern:
+
+	def __init__ (self, pattern):
+		self.re = re.compile (pattern)
+
+	def match (self, text):
+		attempt = self.re.match (text)
+		if attempt is not None:
+			attempt = attempt.groups ()
+		return attempt
+
 #TODO# Produce patterns to preselect under arguments
 
-re_numeric = re.compile ('[0-9]+')
 re_netstat = re.compile ('(?:tcp|udp|sctp):[0-9]+')
 
-opt_month = set (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])
-use_month = opt_month
+use_month = [ months [mi-1] for mi in time_ranges [1] ]
 re_month = '(' + '|'.join (use_month) + ')'
 ky_month = ['month']
 
-opt_day = set (range (1,32))
-use_day = opt_day
+use_day = [ '%02d' % dy for dy in time_ranges [2] ]
 re_day = '(' + '|'.join ( [str (d) for d in use_day ] ) + ')'
 ky_day = ['day']
-#CUTE:FIXED# re_day = '([1-9]|[12][0-9]|30|31)'
 
-re_time = '([01][0-9]|2[0-3]:[0-5][0-9]:[0-5][0-9])'
+#TODO# Perhaps incorporate time here too (need to filter in any case)
+use_hour = [ '%02d' % hr for hr in time_ranges [3] ]
+use_min  = [ '%02d' % mn for mn in time_ranges [4] ]
+use_sec  = [ '%02d' % sc for sc in time_ranges [5] ]
+re_hour = '(?:' + '|'.join (use_hour) + ')'
+re_min  = '(?:' + '|'.join (use_min ) + ')'
+re_sec  = '(?:' + '|'.join (use_sec ) + ')'
+re_time = '(' + re_hour + ':' + re_min + ':' + re_sec + ')'
 ky_time = ['time']
 
 re_tstamp = '((' + re_month + ' +' + re_day + ') ' + re_time + ')'
@@ -227,9 +381,9 @@ ky_rest = ['logentry']
 re_logline = re_tstamp + ' ' + re_host + ' ' + re_proc + re_pid + ': +' + re_rest + '\n'
 ky_logline = ky_tstamp +       ky_host +       ky_proc + ky_pid +         ky_rest
 
-print 'REGEXP', re_logline
+#DEBUG# print 'REGEXP', re_logline
 
-seeline = re.compile (re_logline)
+patn_logline = Pattern (re_logline)
 
 if var_names is None:
 	var_names = ky_logline
@@ -246,13 +400,26 @@ for lf in args.logfile:
 	try:
 		with open (lf) as lfh:
 			for lfl in lfh.readlines ():
-				logged =  seeline.match (lfl)
+				logged =  patn_logline.match (lfl)
 				if not logged:
 					if args.verbose:
 						sys.stderr.write ('Unrecognised line format: ', lfl)
 						warning = True
 					continue
-				linevars = dict (zip (ky_logline, logged.groups ()))
+				if ts_before or ts_after:
+					#TODO# Internationalisation kills strptime() below
+					#TODO# Year is uknown to strptime() below
+					tm_logline = time.strptime (logged [0], '%b %d %H:%M:%S')
+					tm_logline = (now_yr,tm_logline[1],tm_logline[2],tm_logline[3],tm_logline[4],tm_logline[5],tm_logline[6],tm_logline[7],tm_logline[8])
+					if tm_logline > now_tm:
+						tm_logline = (now_yr,tm_logline[1],tm_logline[2],tm_logline[3],tm_logline[4],tm_logline[5],tm_logline[6],tm_logline[7],tm_logline[8])
+					#TODO# Again, DST may be interfering with good taste...
+					ts_logline = time.mktime (tm_logline)
+					if ts_after  and ts_logline < ts_after :
+						continue
+					if ts_before and ts_logline > ts_before:
+						continue
+				linevars = dict (zip (ky_logline, logged))
 				where = True
 				for (var,val,eq) in conditions:
 					#DEBUG# print 'WHERE', (var,val,eq)
@@ -268,7 +435,10 @@ for lf in args.logfile:
 				if where:
 					#DEBUG# print linevars
 					for var in var_names:
-						print var + '=' + linevars [var]
+						if linevars [var] is not None:
+							print var + '=' + linevars [var]
+						else:
+							print var + ' is None'
 					print
 	except Exception, e:
 		sys.stderr.write ('Skipping non-accessible --logfile ' + lf + ' (' + str (e) + ')\n')
