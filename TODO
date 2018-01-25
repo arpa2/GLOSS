@@ -25,8 +25,8 @@ Lines starting with - remain as TODO, lines with + are DONE.
 - driver
 - driver: postfix
 - driver: opendnssec
-- mode: pager
-- mode: http
++ mode: pager
++ mode: http (just "lynx -stdin" for now)
 - mode: port [on localhost] (really?)
 - mode: address:port (really?)
 - mode: UNIX domain socket (really?)

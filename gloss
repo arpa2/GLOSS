@@ -20,6 +20,7 @@
 # From: Rick van Rein <rick@openfortress.nl>
 
 
+import os
 import sys
 import time
 
@@ -137,7 +138,7 @@ argprs.add_argument ('-v', '--verbose',
 
 
 #
-# Output modules
+# Output variant
 #
 
 def output_text_open (fh, var_names):
@@ -171,12 +172,25 @@ def output_vars_done (hdl):
 
 def output_html_open (fh, var_names):
 	hdl = fh
-	hdl.write ('<html>\n<body>\n<table>\n')
+	hdl.write ('<html>\n<body>\n')
+	hdl.write ('<form>\n')
+	for whr in args.where:
+		try:
+			(var,val) = whr.split ('=', 1)
+			hdl.write ('<input type=checkbox name="where_' + var + '" checked/> ' + var + ' = <input type=text name="' + var + '" value="' + val + '"/><br/>\n')
+		except:
+			pass
+	hdl.write ('<input type=submit value=" Query &gt;&gt; "/><br/>\n')
+	for var in ky_logline:
+		hdl.write ('<input type=checkbox name="select" value="' + var + '"' + (' checked' if var in args.select else '') + '"/>' + var + ' ')
+	hdl.write ('<br/>\n')
+	hdl.write ('</form>\n')
+	hdl.write ('<table>\n')
 	return hdl
 
 def output_html_line (hdl, var_names, linevars):
 	hdl.write ('<tr>' +
-		''.join ([ '<td>' + str (linevars [var] or '&nbsp;') + '</td>'
+		''.join ([ '<td><a href="/?' + var + '=' + linevars [var] + '">' + (linevars [var] or '&nbsp;') + '</a></td>'
 			for var in var_names ]) +
 		'</tr>\n')
 
@@ -197,6 +211,36 @@ def output_csv_line (hdl, var_names,linevars):
 
 def output_csv_done (hdl):
 	pass
+
+
+#
+# Modes of delivery
+#
+
+def wrmode_pager_open ():
+	hdl = sys.stdout
+	if os.isatty (hdl.fileno ()):
+		pager = os.getenv ('PAGER', 'less')
+		hdl = os.popen (pager, 'w')
+	return hdl
+
+def wrmode_pager_done (hdl):
+	if not os.isatty (hdl.fileno ()):
+		hdl.close ()
+
+def wrmode_http_open ():
+	#TODO# presumptious: html, lynx -- and this is not HTTP
+	hdl = sys.stdout
+	if os.isatty (hdl.fileno ()):
+		#TODO# pager = os.getenv ('PAGER', 'less')
+		pager = 'lynx -stdin'
+		hdl = os.popen (pager, 'w')
+	return hdl
+
+def wrmode_http_done (hdl):
+	if not os.isatty (hdl.fileno ()):
+		hdl.close ()
+
 
 
 
@@ -257,6 +301,14 @@ else:
 	output_open = output_text_open
 	output_line = output_text_line
 	output_done = output_text_done
+
+if args.mode == 'http':
+	#TODO# Again, presumptious, this is not HTTP at all
+	wrmode_open = wrmode_http_open
+	wrmode_done = wrmode_http_done
+else:
+	wrmode_open = wrmode_pager_open
+	wrmode_done = wrmode_pager_done
 
 
 conditions = []
@@ -481,7 +533,8 @@ if var_names is None:
 # TODO: Support zipped logfile content
 #
 
-hdl = output_open (sys.stdout, var_names)
+mod = wrmode_open ()
+hdl = output_open (mod, var_names)
 for lf in args.logfile:
 	try:
 		with open (lf) as lfh:
@@ -527,6 +580,7 @@ for lf in args.logfile:
 		warning = True
 		pass
 output_done (hdl)
+wrmode_done (mod)
 
 # Report any warning through the exit value
 sys.exit (1 if warning else 0)
