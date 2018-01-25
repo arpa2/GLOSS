@@ -26,6 +26,8 @@ import time
 import re
 import argparse
 
+import csv
+
 
 #
 # Commandline argument parser
@@ -88,8 +90,8 @@ argprs.add_argument ('-m', '--mode',
 argprs.add_argument ('-e', '--encoding',
 		type=str,
 		default='text',	#TODO# Dependent on --mode perhaps?
-		choices=['text','html','csv'],
-		help='code the output in a particular manner; html is an option, and so are csv and count; default is text for plain text display of selected lines from the log files')
+		choices=['text','vars','html','csv'],
+		help='code the output in a particular manner; html is an option, and so are csv and vars; default is text for plain text display of selected lines from the log files')
 
 argprs.add_argument ('-s', '--select',
 		type=str,
@@ -132,6 +134,76 @@ argprs.add_argument ('-v', '--verbose',
 #NASTY# 		action='store',
 #NASTY# 		help='explicit specification of logfile to gloss over; may specify more than one; defaults are introduced by most --driver specifications; in absense of those, /var/log/syslog and /var/log/messages are used')
 
+
+
+#
+# Output modules
+#
+
+def output_text_open (fh, var_names):
+	hdl = fh
+	return hdl
+
+def output_text_line (hdl, var_names, linevars):
+	hdl.write (linevars ['logline'])
+
+def output_text_done (hdl):
+	pass
+
+
+
+def output_vars_open (fh, var_names):
+	hdl = fh
+	return hdl
+
+def output_vars_line (hdl, var_names, linevars):
+	for var in var_names:
+		if linevars [var] is not None:
+			hdl.write (var + '=' + linevars [var] + '\n')
+		else:
+			hdl.write (var + ' is None\n')
+	hdl.write ('\n')
+
+def output_vars_done (hdl):
+	pass
+
+
+
+def output_html_open (fh, var_names):
+	hdl = fh
+	hdl.write ('<html>\n<body>\n<table>\n')
+	return hdl
+
+def output_html_line (hdl, var_names, linevars):
+	hdl.write ('<tr>' +
+		''.join ([ '<td>' + str (linevars [var] or '&nbsp;') + '</td>'
+			for var in var_names ]) +
+		'</tr>\n')
+
+def output_html_done (hdl):
+	hdl.write ('</table>\n</body>\n</html>\n')
+
+
+
+def output_csv_open (fh, var_names):
+	hdl = csv.writer (fh)
+	row = [ var.upper() for var in var_names ]
+	hdl.writerow (row)
+	return hdl
+
+def output_csv_line (hdl, var_names,linevars):
+	row = [ linevars [var] for var in var_names ]
+	hdl.writerow (row)
+
+def output_csv_done (hdl):
+	pass
+
+
+
+#
+# Interpret options, override defaults with more clever ones
+#
+
 if sys.argv [1:2] == ['--help']:
 	argprs.print_help ()
 	sys.exit (0)
@@ -141,11 +213,6 @@ warning = False
 args = argprs.parse_args ()
 
 #DEBUG# print 'Arguments:', args
-
-
-#
-# Interpret options, override defaults with more clever ones
-#
 
 if args.journal is not None:
 	sys.stderr.write ('The --journal option is not yet supported\n')
@@ -173,6 +240,24 @@ else:
 		for seln_elm in seln.split ('='):
 			if seln_elm != '':
 				var_names.append (seln_elm)
+
+if args.encoding == 'csv':
+	output_open = output_csv_open
+	output_line = output_csv_line
+	output_done = output_csv_done
+elif args.encoding == 'html':
+	output_open = output_html_open
+	output_line = output_html_line
+	output_done = output_html_done
+elif args.encoding == 'vars':
+	output_open = output_vars_open
+	output_line = output_vars_line
+	output_done = output_vars_done
+else:
+	output_open = output_text_open
+	output_line = output_text_line
+	output_done = output_text_done
+
 
 conditions = []
 for w in args.where:
@@ -396,6 +481,7 @@ if var_names is None:
 # TODO: Support zipped logfile content
 #
 
+hdl = output_open (sys.stdout, var_names)
 for lf in args.logfile:
 	try:
 		with open (lf) as lfh:
@@ -420,6 +506,7 @@ for lf in args.logfile:
 					if ts_before and ts_logline > ts_before:
 						continue
 				linevars = dict (zip (ky_logline, logged))
+				linevars ['logline'] = lfl
 				where = True
 				for (var,val,eq) in conditions:
 					#DEBUG# print 'WHERE', (var,val,eq)
@@ -434,16 +521,12 @@ for lf in args.logfile:
 						where = False
 				if where:
 					#DEBUG# print linevars
-					for var in var_names:
-						if linevars [var] is not None:
-							print var + '=' + linevars [var]
-						else:
-							print var + ' is None'
-					print
+					output_line (hdl, var_names, linevars)
 	except Exception, e:
 		sys.stderr.write ('Skipping non-accessible --logfile ' + lf + ' (' + str (e) + ')\n')
 		warning = True
 		pass
+output_done (hdl)
 
 # Report any warning through the exit value
 sys.exit (1 if warning else 0)

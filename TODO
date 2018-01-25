@@ -31,9 +31,10 @@ Lines starting with - remain as TODO, lines with + are DONE.
 - mode: address:port (really?)
 - mode: UNIX domain socket (really?)
 - mode: SSH subsystem (really?)
-- encoding: text
-- encoding: html
-- encoding: csv
++ encoding: text
++ encoding: vars
++ encoding: html
++ encoding: csv
 + select
 + where
 + or/where

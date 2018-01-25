@@ -40,3 +40,81 @@ to gloss over, basically.
 to you.  Please see the TODO file or the `--help` output
 to learn more about its current state.
 
+
+## Example Use
+
+One very good example of using GLOSS is the Postfix MTA.
+It logs copious information with recurring values such as
+email addresses and queue identifiers.  Let's say that the
+queue shows an email with a queue identity `5466A1D54E` that
+we wish to explore in more detail.  To do this, we would
+invoke
+
+```
+gloss -w postfix.qid=5466A1D54E
+```
+
+This invocation sets off the following reasoning:
+
+  * The variable scope `postfix` must be loaded.  This defines
+    a number of variables, including `qid`.  It does not
+    itself define matching rules, as this is purely a scope
+    for variables.
+
+  * This variable scope is a descriptor that references a
+    number of proc drivers to load, which are added to the
+    given (empty) list.
+
+  * These additional proc drivers specify regular expressions
+    and corresponding variable lists that match it.  Those
+    that bind the requested variable `qid` are incorporated.
+
+  * The program can now run with a limited number of proc
+    drivers and for those it will only match the regular
+    expressions that bind the `qid` variable.  On each, it
+    investigates the value and, if matching, it will display
+    that line in the desired format.
+
+We may look through the entries manually, which is quite
+pleasant when viewing HTML over HTTP because we can click
+on variable bindings; but the command line also allows us
+to make a direct query for the information that we need:
+
+```
+gloss -w postfix.qid=5466A1D54E -s postfix.from
+```
+
+This would print the value for that variable; in the current
+form as part of the complete logline, but another output form
+may also be used.
+
+Either way, we now have an email address to continue looking
+for, and we can continue in the same vain,
+
+```
+gloss -w postfix.from=john@exmaple.com
+```
+
+We might output information as a CSV listing, for import
+into all sorts of software.  Or we can just continue to
+gloss over it ourselves.
+
+Had we chosen to represent the outut as HTML over HTTP, then
+we could have clicked on the address and seen it enacted.
+Some interaction would be possible to keep or drop the
+prior selection of the `postfix.qid` match; this allows a
+choice between tightening or broadening the search.
+
+The latter query would be the broading search, while a
+tighter search would be based on both `-w` conditions.
+When this is run, a much smaller set of variable-binding
+regular expressions from the proc drivers is considered.
+
+Note that a smaller number of regular expressions helps
+to speed up the processing of large logfiles.  This is
+in the interest of interactive use of the tool, for
+instance as HTML over HTTP.  Much of GLOSS follows the
+line of reasoning that a well-prepared query can do
+better when sifting through a large logfile.
+
+
